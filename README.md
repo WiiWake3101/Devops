@@ -175,6 +175,55 @@ python scripts/upload_firmware.py delete --all
 - Ensure your `.env` file contains `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
 - The script will look for binaries in `python upload_firmware.py upload "C:\Users\vivek\OneDrive\Documents\Arduino\Devops\build\esp32.esp32.esp32wrover\Devops.ino.bin" 1.0.0 GPS-Tracker false` by default.
 
+## 🛳️ Docker Setup
+
+You can run the React Native Expo development server inside a Docker container for consistent development environments.
+
+### Dockerfile Structure
+
+```dockerfile
+# Use a lightweight Node.js base image
+FROM node:18-alpine
+
+# Set the working directory
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Add environment variables for Expo
+ENV EXPO_DEVTOOLS_LISTEN_ADDRESS=0.0.0.0
+ENV REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.100 
+
+# Copy .env file
+COPY .env ./
+
+# Copy the rest of the project files
+COPY . .
+
+# Expose the necessary Expo ports
+EXPOSE 8081 19000 19001 19002
+
+# Start the Expo development server
+CMD ["npx", "expo", "start","-c"]
+```
+
+### Build the Docker Image
+
+```sh
+docker build -t smart-vehicle-app .
+```
+
+### Run the Docker Container
+
+```sh
+docker run -it --rm -p 8081:8081 -p 19000:19000 -p 19001:19001 -p 19002:19002 --env-file .env smart-vehicle-app
+```
+
+- The `--env-file .env` flag ensures your environment variables are loaded.
+- The `-p` flags expose the necessary ports for Expo and React Native development.
+
 ## Getting Started
 
 1. Clone the repository

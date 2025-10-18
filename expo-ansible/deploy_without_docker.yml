@@ -1,0 +1,224 @@
+---
+- name: Deploy Expo App Without Docker
+  hosts: expo_servers
+  become: yes
+  vars:
+    app_repo: "https://github.com/WiiWake3101/Devops.git"
+    app_branch: "main"
+    app_dir: "/home/ubuntu/Devops"
+    public_ip: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name: git
+        state: present
+
+    - name: Add NodeSource repository
+      shell: curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+
+    - name: Update npm
+      npm:
+        name: npm
+        global: yes
+        version: 11.6.1
+
+    - name: Install Expo CLI globally
+      npm:
+        name: expo-cli
+        global: yes
+        state: present
+
+    - name: Install dependencies for Grafana
+      apt:
+        name:
+          - apt-transport-https
+          - software-properties-common
+          - wget
+        state: present
+        
+    - name: Add Grafana GPG key
+      apt_key:
+        url: https://packages.grafana.com/gpg.key
+        state: present
+        
+    - name: Add Grafana repository
+      apt_repository:
+        repo: deb https://packages.grafana.com/oss/deb stable main
+        state: present
+        
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+        update_cache: yes
+        
+    - name: Start and enable Grafana service
+      systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+        
+    - name: Ensure Grafana is running
+      systemd:
+        name: grafana-server
+        state: started
+      register: grafana_status
+      
+    - name: Display Grafana access information
+      debug:
+        msg: "Grafana is now available at http://{{ public_ip }}:3000 (default credentials: admin/admin)"
+
+     # Install Prometheus
+    - name: Create Prometheus system group
+      group:
+        name: prometheus
+        system: yes
+        state: present
+
+    - name: Create Prometheus system user
+      user:
+        name: prometheus
+        system: yes
+        group: prometheus
+        shell: /sbin/nologin
+        create_home: no
+        home: /var/lib/prometheus
+
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Download and extract Prometheus
+      unarchive:
+        src: https://github.com/prometheus/prometheus/releases/download/v2.46.0/prometheus-2.46.0.linux-amd64.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Copy Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-2.46.0.linux-amd64/{{ item }}"
+        dest: /usr/local/bin/
+        remote_src: yes
+        mode: '0755'
+        owner: prometheus
+        group: prometheus
+      loop:
+        - prometheus
+        - promtool
+
+    # Install Node Exporter for system metrics
+    - name: Download and extract Node Exporter
+      unarchive:
+        src: https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Copy Node Exporter binary
+      copy:
+        src: /tmp/node_exporter-1.6.1.linux-amd64/node_exporter
+        dest: /usr/local/bin/
+        remote_src: yes
+        mode: '0755'
+
+    - name: Create Prometheus configuration
+      template:
+        src: prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+    
+    - name: Create Prometheus service file
+      template:
+        src: prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+    
+    - name: Create Node Exporter service file
+      template:
+        src: node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+    
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+    
+    - name: Enable and start Prometheus service
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+    
+    - name: Enable and start Node Exporter service
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+    
+    - name: Ensure Prometheus is running
+      systemd:
+        name: prometheus
+        state: started
+      register: prometheus_status
+    
+    - name: Display Prometheus access information
+      debug:
+        msg: "Prometheus is now available at http://{{ public_ip }}:9090"
+
+    - name: Clone application repository
+      git:
+        repo: "{{ app_repo }}"
+        version: "{{ app_branch }}"
+        dest: "{{ app_dir }}"
+        force: yes
+      become: no
+
+    - name: Create .env file with Supabase configuration
+      copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          # Supabase Configuration
+          EXPO_PUBLIC_SUPABASE_URL=https://dwzyknpwwqslasxlwuku.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3enlrbnB3d3FzbGFzeGx3dWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2MzA2MjksImV4cCI6MjA3MDIwNjYyOX0.omdxqOgVtFVwTclwj2msjorzr9jjsY_hcCnERW51tsM
+      become: no
+
+    - name: Install application dependencies
+      npm:
+        path: "{{ app_dir }}"
+        state: present
+      become: no
+
+    - name: Create Expo service file
+      template:
+        src: expo-app.service.j2
+        dest: /etc/systemd/system/expo-app.service
+        mode: '0644'
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Expo service
+      systemd:
+        name: expo-app
+        state: restarted
+        enabled: yes
+

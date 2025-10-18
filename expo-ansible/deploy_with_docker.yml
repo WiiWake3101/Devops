@@ -1,0 +1,173 @@
+---
+- name: Deploy Expo App With Docker
+  hosts: expo_servers
+  become: yes
+  vars:
+    app_repo: "https://github.com/WiiWake3101/Devops.git"
+    app_branch: "main"
+    app_dir: "/home/ubuntu/Devops"
+    public_ip: "{{ hostvars[inventory_hostname]['ansible_host'] }}"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - git
+          - docker.io
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Clone application repository
+      git:
+        repo: "{{ app_repo }}"
+        version: "{{ app_branch }}"
+        dest: "{{ app_dir }}"
+        force: yes
+      become: no
+
+    - name: Create .env file with Supabase configuration
+      copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          # Supabase Configuration
+          EXPO_PUBLIC_SUPABASE_URL=https://dwzyknpwwqslasxlwuku.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR3enlrbnB3d3FzbGFzeGx3dWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2MzA2MjksImV4cCI6MjA3MDIwNjYyOX0.omdxqOgVtFVwTclwj2msjorzr9jjsY_hcCnERW51tsM
+      become: no
+
+    - name: Ensure Expo CLI is installed in Dockerfile
+      lineinfile:
+        path: "{{ app_dir }}/Dockerfile"
+        insertafter: 'RUN npm ci'
+        line: 'RUN npm install -g expo-cli'
+      become: no
+
+    - name: Update Dockerfile with correct IP address
+      replace:
+        path: "{{ app_dir }}/Dockerfile"
+        regexp: '#ENV REACT_NATIVE_PACKAGER_HOSTNAME=.*'
+        replace: 'ENV REACT_NATIVE_PACKAGER_HOSTNAME={{ public_ip }}'
+      become: no
+
+    - name: Uncomment and set EXPO_TOKEN in Dockerfile
+      replace:
+        path: "{{ app_dir }}/Dockerfile"
+        regexp: '#ENV EXPO_TOKEN=add your expo token here'
+        replace: 'ENV EXPO_TOKEN=tQVmqSjlRheBkyd_rCGg9m9owXewWWLpbKEcRSm2'
+      become: no
+
+    - name: Create Docker service file
+      template:
+        src: docker-expo.service.j2
+        dest: /etc/systemd/system/docker-expo.service
+        mode: '0644'
+      vars:
+          timeout_sec: 900
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Docker service
+      systemd:
+        name: docker-expo
+        state: restarted
+        enabled: yes
+
+    # Pull and run Prometheus container
+    - name: Create Prometheus config directory
+      file:
+        path: /home/ubuntu/prometheus
+        state: directory
+
+    - name: Copy Prometheus config file
+      template:
+        src: prometheus.yml.j2
+        dest: /home/ubuntu/prometheus/prometheus.yml
+
+    - name: Run Prometheus container
+      docker_container:
+        name: prometheus
+        image: prom/prometheus:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "9090:9090"
+        volumes:
+          - /home/ubuntu/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+    # Pull and run Node Exporter container
+    - name: Run Node Exporter container
+      docker_container:
+        name: node_exporter
+        image: prom/node-exporter:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "9100:9100"
+
+    # Pull and run Grafana container
+    - name: Create Grafana data directory
+      file:
+        path: /home/ubuntu/grafana
+        state: directory
+
+    - name: Run Grafana container
+      docker_container:
+        name: grafana
+        image: grafana/grafana:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "3000:3000"
+        volumes:
+          - /home/ubuntu/grafana:/var/lib/grafana
+
+    - name: Ensure Grafana data directory is owned by UID 472
+      file:
+        path: /home/ubuntu/grafana
+        owner: 472
+        group: 472
+        state: directory
+        recurse: yes
+
+    - name: Display Grafana access information
+      debug:
+        msg: "Grafana is now available at http://{{ public_ip }}:3000 (default credentials: admin/admin)"
+
+    - name: Display Prometheus access information
+      debug:
+        msg: "Prometheus is now available at http://{{ public_ip }}:9090"
+
+    - name: Check if Grafana container is running
+      shell: docker ps --filter "name=grafana" --filter "status=running" --format "{{'{{.Names}}'}}"
+      register: grafana_status
+      changed_when: false
+
+    - name: Display Grafana container status
+      debug:
+        msg: "Grafana running: {{ grafana_status.stdout }}"
+
+    - name: Show last 20 lines of Grafana container logs
+      shell: docker logs --tail 20 grafana
+      register: grafana_logs
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display Grafana container logs
+      debug:
+        msg: "{{ grafana_logs.stdout }}"

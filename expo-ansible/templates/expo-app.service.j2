@@ -1,0 +1,18 @@
+[Unit]
+Description=Expo App Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory={{ app_dir }}
+Environment=EXPO_DEVTOOLS_LISTEN_ADDRESS=0.0.0.0
+Environment=REACT_NATIVE_PACKAGER_HOSTNAME={{ public_ip }}
+Environment=CI=1
+Environment=EXPO_TOKEN=tQVmqSjlRheBkyd_rCGg9m9owXewWWLpbKEcRSm2
+ExecStart=/usr/bin/npx expo start
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

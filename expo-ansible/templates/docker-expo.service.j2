@@ -1,0 +1,19 @@
+[Unit]
+Description=Expo App Docker Container
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Devops
+TimeoutStartSec=900
+ExecStartPre=-/usr/bin/docker stop expo-container
+ExecStartPre=-/usr/bin/docker rm expo-container
+ExecStartPre=/usr/bin/docker build -t expo-app .
+ExecStart=/usr/bin/docker run --name expo-container -p 19000:19000 -p 19001:19001 -p 19002:19002 -p 8081:8081 expo-app
+ExecStop=/usr/bin/docker stop expo-container
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
